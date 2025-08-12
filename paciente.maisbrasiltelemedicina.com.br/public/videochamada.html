@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Consulta Online - Mais Brasil Telemedicina</title>
+    <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/interactjs/dist/interact.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.7.32/dist/sweetalert2.all.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: white;
+            overflow: hidden;
+        }
+
+        #video-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+        }
+
+        #remote-stream {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #local-stream {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            height: 200px;
+            border: 2px solid #10b981;
+            border-radius: 12px;
+            background: #2a2a2a;
+            cursor: move;
+            z-index: 10;
+        }
+
+        #status-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px 40px;
+            border-radius: 12px;
+            z-index: 5;
+        }
+
+        .controls {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px 25px;
+            border-radius: 50px;
+            backdrop-filter: blur(10px);
+            z-index: 20;
+        }
+
+        .controls button {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: all 0.3s ease;
+        }
+
+        .controls button.active {
+            background: #10b981;
+            color: white;
+        }
+
+        .controls button:not(.active) {
+            background: #ef4444;
+            color: white;
+        }
+
+        .controls button:hover {
+            transform: scale(1.1);
+        }
+
+        #leave {
+            background: #ef4444 !important;
+        }
+
+        #consultation-timer {
+            background: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+
+        .participant-info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px 15px;
+            border-radius: 8px;
+            z-index: 10;
+        }
+
+        .video-placeholder {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #2a2a2a;
+            border-radius: 8px;
+        }
+
+        .video-placeholder i {
+            font-size: 48px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div id="video-container">
+        <div id="remote-stream">
+            <div class="video-placeholder">
+                <i class="fas fa-user"></i>
+            </div>
+        </div>
+        
+        <div id="local-stream">
+            <div class="video-placeholder">
+                <i class="fas fa-video"></i>
+            </div>
+        </div>
+
+        <div class="participant-info">
+            <div>👨‍⚕️ Aguardando médico...</div>
+        </div>
+
+        <div id="status-message">Conectando na consulta...</div>
+    </div>
+
+    <div class="controls">
+        <button id="camera" class="active" title="Câmera">
+            <i class="fas fa-video"></i>
+        </button>
+        <button id="mic" class="active" title="Microfone">
+            <i class="fas fa-microphone"></i>
+        </button>
+        <button id="leave" title="Sair da Consulta">
+            <i class="fas fa-phone-slash"></i>
+        </button>
+        <div id="consultation-timer">00:00</div>
+    </div>
+
+    <script>
+        // CONFIGURAÇÃO AGORA.IO
+        const APP_ID = '1894664567894149b6b232820e6ac2d9';
+        let CHANNEL = '';
+        let DURACAO_MINUTOS = 30;
+        let uid = Math.floor(Math.random() * 1000000);
+
+        // Estados
+        let localStream = null;
+        let remoteStream = null;
+        let agoraEngine = null;
+        let isJoined = false;
+        let startTime = null;
+        let timerInterval = null;
+
+        // Elementos DOM
+        const statusMessage = document.getElementById('status-message');
+        const remoteContainer = document.getElementById('remote-stream');
+        const localContainer = document.getElementById('local-stream');
+        const cameraBtn = document.getElementById('camera');
+        const micBtn = document.getElementById('mic');
+        const leaveBtn = document.getElementById('leave');
+        const timerDisplay = document.getElementById('consultation-timer');
+
+        // Inicialização
+        window.onload = async () => {
+            // ROOMID FIXO PARA TESTE
+            CHANNEL = 'room_gM5fyROCIPJ0vF3GtE87';
+            
+            // Extrair outros parâmetros da URL (opcionais)
+            const urlParams = new URLSearchParams(window.location.search);
+            const consultaId = urlParams.get('consultaId') || 'teste';
+            DURACAO_MINUTOS = parseInt(urlParams.get('duracao')) || 30;
+
+            console.log('Inicializando videochamada:', { CHANNEL, consultaId, DURACAO_MINUTOS });
+
+            await init();
+        };
+
+        // Inicializar Agora.io
+        async function init() {
+            try {
+                console.log('🚀 Inicializando Agora.io...');
+                
+                // Verificar suporte do navegador
+                const checkResult = AgoraRTC.checkSystemRequirements();
+                console.log('✅ Verificação do sistema:', checkResult);
+                
+                agoraEngine = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+
+                // Event listeners
+                agoraEngine.on("user-published", handleUserPublished);
+                agoraEngine.on("user-unpublished", handleUserUnpublished);
+                agoraEngine.on("user-left", handleUserLeft);
+                agoraEngine.on("user-joined", handleUserJoined);
+
+                // Entrar no canal
+                await joinChannel();
+
+            } catch (error) {
+                console.error('❌ Erro ao inicializar:', error);
+                showStatus('Erro ao conectar. Verifique sua conexão.');
+            }
+        }
+
+        // Entrar no canal
+        async function joinChannel() {
+            try {
+                showStatus('Entrando na consulta...');
+
+                // Entrar no canal
+                await agoraEngine.join(APP_ID, CHANNEL, null, uid);
+                console.log('Entrou no canal:', CHANNEL);
+
+                // Criar stream local
+                console.log('🎥 Criando stream local...');
+                localStream = await AgoraRTC.createMicrophoneAndCameraTracks();
+                console.log('✅ Stream local criado:', localStream);
+
+                // Reproduzir vídeo local primeiro
+                console.log('📺 Reproduzindo vídeo local...');
+                localStream[1].play('local-stream');
+                console.log('✅ Vídeo local reproduzido!');
+
+                // Publicar stream local
+                console.log('📡 Publicando stream local...');
+                await agoraEngine.publish(localStream);
+                console.log('✅ Stream local publicado com sucesso!');
+
+                isJoined = true;
+                showStatus('Conectado! Aguardando outro participante...');
+                startTimer();
+
+            } catch (error) {
+                console.error('Erro ao entrar no canal:', error);
+                showStatus('Erro ao conectar na consulta');
+            }
+        }
+
+        // Usuário remoto se conectou
+        async function handleUserPublished(user, mediaType) {
+            console.log('🔥 USUÁRIO PUBLICOU:', user.uid, mediaType);
+
+            try {
+                // Subscrever ao usuário remoto
+                await agoraEngine.subscribe(user, mediaType);
+                console.log('✅ Subscrito com sucesso:', user.uid, mediaType);
+
+                if (mediaType === "video") {
+                    console.log('📹 Reproduzindo vídeo remoto...');
+                    remoteStream = user.videoTrack;
+                    
+                    // Limpar placeholder antes de reproduzir
+                    const remoteContainer = document.querySelector('#remote-stream');
+                    remoteContainer.innerHTML = '';
+                    
+                    remoteStream.play('remote-stream');
+                    showStatus('');
+                    document.querySelector('.participant-info').innerHTML = '👨‍⚕️ Médico conectado';
+                    console.log('✅ Vídeo remoto reproduzido!');
+                }
+
+                if (mediaType === "audio") {
+                    console.log('🔊 Reproduzindo áudio remoto...');
+                    user.audioTrack.play();
+                    console.log('✅ Áudio remoto reproduzido!');
+                }
+            } catch (error) {
+                console.error('❌ Erro ao subscrever:', error);
+            }
+        }
+
+        // Usuário remoto desconectou
+        function handleUserUnpublished(user, mediaType) {
+            console.log('Usuário desconectou:', user.uid, mediaType);
+            
+            if (mediaType === "video") {
+                if (remoteStream) {
+                    remoteStream.stop();
+                    remoteStream = null;
+                }
+                document.querySelector('#remote-stream').innerHTML = '<div class="video-placeholder"><i class="fas fa-user"></i></div>';
+                document.querySelector('.participant-info').innerHTML = '👨‍⚕️ Médico desconectado';
+            }
+        }
+
+        // Usuário entrou no canal
+        function handleUserJoined(user) {
+            console.log('🚪 USUÁRIO ENTROU NO CANAL:', user.uid);
+            document.querySelector('.participant-info').innerHTML = '⏳ Outro participante conectou, aguardando vídeo...';
+        }
+
+        // Usuário saiu
+        function handleUserLeft(user) {
+            console.log('👋 USUÁRIO SAIU:', user.uid);
+            document.querySelector('.participant-info').innerHTML = '👨‍⚕️ Participante saiu da consulta';
+        }
+
+        // Controles
+        cameraBtn.addEventListener('click', toggleCamera);
+        micBtn.addEventListener('click', toggleMic);
+        leaveBtn.addEventListener('click', leaveChannel);
+
+        async function toggleCamera() {
+            if (!localStream) return;
+
+            const enabled = localStream[1].enabled;
+            await localStream[1].setEnabled(!enabled);
+            
+            cameraBtn.classList.toggle('active', !enabled);
+            cameraBtn.innerHTML = !enabled ? '<i class="fas fa-video"></i>' : '<i class="fas fa-video-slash"></i>';
+        }
+
+        async function toggleMic() {
+            if (!localStream) return;
+
+            const enabled = localStream[0].enabled;
+            await localStream[0].setEnabled(!enabled);
+            
+            micBtn.classList.toggle('active', !enabled);
+            micBtn.innerHTML = !enabled ? '<i class="fas fa-microphone"></i>' : '<i class="fas fa-microphone-slash"></i>';
+        }
+
+        async function leaveChannel() {
+            try {
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                }
+
+                if (localStream) {
+                    localStream[0].close();
+                    localStream[1].close();
+                }
+
+                if (agoraEngine && isJoined) {
+                    await agoraEngine.leave();
+                }
+
+                showStatus('Consulta finalizada');
+                
+                // Fechar janela após 2 segundos
+                setTimeout(() => {
+                    window.close();
+                }, 2000);
+
+            } catch (error) {
+                console.error('Erro ao sair:', error);
+                window.close();
+            }
+        }
+
+        // Timer da consulta
+        function startTimer() {
+            startTime = new Date();
+            timerInterval = setInterval(updateTimer, 1000);
+        }
+
+        function updateTimer() {
+            if (!startTime) return;
+
+            const now = new Date();
+            const elapsed = Math.floor((now - startTime) / 1000);
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = elapsed % 60;
+
+            timerDisplay.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+            // Verificar limite de tempo
+            if (minutes >= DURACAO_MINUTOS) {
+                Swal.fire({
+                    title: 'Tempo da consulta esgotado',
+                    text: `A consulta de ${DURACAO_MINUTOS} minutos foi finalizada.`,
+                    icon: 'info',
+                    confirmButtonText: 'Finalizar'
+                }).then(() => {
+                    leaveChannel();
+                });
+            }
+        }
+
+        // Mostrar status
+        function showStatus(message) {
+            if (message) {
+                statusMessage.textContent = message;
+                statusMessage.style.display = 'block';
+            } else {
+                statusMessage.style.display = 'none';
+            }
+        }
+
+        // Tornar vídeo local arrastável
+        interact('#local-stream').draggable({
+            inertia: true,
+            modifiers: [
+                interact.modifiers.restrictRect({
+                    restriction: 'parent',
+                    endOnly: true
+                })
+            ],
+            autoScroll: true,
+            listeners: {
+                move: dragMoveListener,
+            }
+        });
+
+        function dragMoveListener(event) {
+            const target = event.target;
+            const x = (parseFloat(target.getAttribute('data-x')) || 0) + event.dx;
+            const y = (parseFloat(target.getAttribute('data-y')) || 0) + event.dy;
+
+            target.style.transform = `translate(${x}px, ${y}px)`;
+            target.setAttribute('data-x', x);
+            target.setAttribute('data-y', y);
+        }
+
+        // Cleanup ao fechar
+        window.addEventListener('beforeunload', async () => {
+            await leaveChannel();
+        });
+    </script>
+</body>
+</html>
