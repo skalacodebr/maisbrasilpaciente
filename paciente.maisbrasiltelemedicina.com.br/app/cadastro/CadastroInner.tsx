@@ -232,13 +232,13 @@ export default function Cadastro() {
             {/* WhatsApp */}
             <div>
               <label className="block text-sm font-medium">WhatsApp</label>
-              <InputMask mask="(00) 00000-0000" value={whatsapp} onChange={e => setWhatsapp(e.target.value)} required disabled={loading} />
+              <InputMask mask="(99) 99999-9999" value={whatsapp} onChange={e => setWhatsapp(e.target.value)} required disabled={loading} />
             </div>
 
             {/* CPF */}
             <div>
               <label className="block text-sm font-medium">CPF</label>
-              <InputMask mask="000.000.000-00" value={cpf} onChange={e => setCpf(e.target.value)} required disabled={loading} />
+              <InputMask mask="999.999.999-99" value={cpf} onChange={e => setCpf(e.target.value)} required disabled={loading} />
               <p className="text-xs text-muted-foreground">Os últimos 6 dígitos do CPF serão usados como senha.</p>
             </div>
 
@@ -264,7 +264,7 @@ export default function Cadastro() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium">CEP</label>
-                <InputMask mask="00000-000" value={cep} onChange={e => setCep(e.target.value)} required disabled={loading} />
+                <InputMask mask="99999-999" value={cep} onChange={e => setCep(e.target.value)} required disabled={loading} />
               </div>
               <div>
                 <label className="block text-sm font-medium">Endereço</label>
