@@ -6,8 +6,9 @@ import { Sidebar } from "@/components/sidebar";
 import { Header } from "@/components/header";
 import { ConsultaCard } from "@/components/consulta-card";
 import { Button } from "@/components/ui/button";
-import { getFirestore, doc, getDoc, setDoc, onSnapshot, updateDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot, updateDoc, collection, addDoc, serverTimestamp, query, where, limit } from "firebase/firestore";
 import { auth } from "@/lib/firebase";
+import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
 import { MEDICAL_SPECIALTIES } from "@/lib/medicalSpecialties";
 import { CashbackCard } from "@/components/cashback/cashback-card";
@@ -28,12 +29,6 @@ const planoMap: Record<string, string> = {
   nutricionista: "GS",
 };
 
-/* --- Dados p/ Sidebar/Header --- */
-const userData = {
-  name: auth.currentUser?.displayName ?? "Usuário",
-  email: auth.currentUser?.email ?? ""
-};
-
 type StatusConsulta = "agendada" | "em_breve" | "concluida" | "cancelada";
 interface Agendamento {
   id: string;
@@ -50,6 +45,7 @@ interface ConsultOption {
 
 export default function Dashboard() {
   const router = useRouter();
+  const { user, loading } = useAuth();
 
   const [allowed, setAllowed]                   = useState<boolean | null>(null);
   const [allowedConsults, setAllowedConsults]   = useState<ConsultOption[]>([]);
@@ -61,7 +57,8 @@ export default function Dashboard() {
   // 1) Protege rota e define opções de Consulta Imediata
   useEffect(() => {
     const init = async () => {
-      const user = auth.currentUser;
+      if (loading) return; // Aguarda verificação do auth
+      
       if (!user) {
         router.replace("/login");
         return;
@@ -112,12 +109,11 @@ export default function Dashboard() {
     };
 
     init();
-  }, [router]);
+  }, [router, user, loading]);
 
   // 2) Busca consultas agendadas
   useEffect(() => {
     const fetchAppointments = async () => {
-      const user = auth.currentUser;
       if (!user) {
         setLoadingAppointments(false);
         return;
@@ -162,9 +158,9 @@ export default function Dashboard() {
       setLoadingAppointments(false);
     };
     fetchAppointments();
-  }, []);
+  }, [user]);
 
-  if (allowed === null) {
+  if (loading || allowed === null) {
     return (
       <div className="flex items-center justify-center h-screen">
         <span className="text-gray-600">Carregando...</span>
@@ -183,6 +179,11 @@ export default function Dashboard() {
     router.push(`/consulta/espera?appointmentId=${id}`);
   };
 
+  const userData = {
+    name: user?.displayName ?? "Usuário",
+    email: user?.email ?? ""
+  };
+
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar user={userData} collapsed={collapsed} />
@@ -195,9 +196,9 @@ export default function Dashboard() {
 
         <main className="p-6">
           {/* Cashback Card */}
-          {auth.currentUser && (
+          {user && (
             <div className="mb-8">
-              <CashbackCard userId={auth.currentUser.uid} />
+              <CashbackCard userId={user.uid} />
             </div>
           )}
 
@@ -258,10 +259,10 @@ function CardConsultaImediata() {
   const router = useRouter();
   const [consultaAtiva, setConsultaAtiva] = useState<ConsultaImediata | null>(null);
   const [carregando, setCarregando] = useState(false);
+  const { user } = useAuth();
 
   useEffect(() => {
     // Monitorar consulta ativa do usuário
-    const user = auth.currentUser;
     if (!user) return;
 
     const db = getFirestore();
@@ -270,19 +271,26 @@ function CardConsultaImediata() {
     let unsubscribe1: (() => void) | null = null;
     let unsubscribe2: (() => void) | null = null;
 
-    // Primeiro, monitorar consultas locais
-    unsubscribe1 = onSnapshot(doc(db, "consultas_imediatas", user.uid), (localDoc) => {
-      if (localDoc.exists()) {
-        const localData = localDoc.data() as ConsultaImediata;
+    // Primeiro, monitorar consultas ativas do usuário
+    const consultasQuery = query(
+      collection(db, "consultas"), 
+      where("patientId", "==", user.uid),
+      where("status", "in", ["pending", "waiting", "agendada", "active"]),
+      limit(1)
+    );
+    
+    unsubscribe1 = onSnapshot(consultasQuery, (snapshot) => {
+      if (!snapshot.empty) {
+        const localDoc = snapshot.docs[0];
+        const localData = { ...localDoc.data(), id: localDoc.id } as ConsultaImediata;
         
-        if (localData.status !== 'completed' && localData.status !== 'cancelled') {
-          setConsultaAtiva(localData);
+        setConsultaAtiva(localData);
+        
+        // Se há uma consulta ativa, monitorar a solicitação principal
+        if (localData.id && !unsubscribe2) {
+          console.log('Monitorando solicitação:', localData.id);
           
-          // Se há uma consulta ativa, monitorar a solicitação principal
-          if (localData.id && !unsubscribe2) {
-            console.log('Monitorando solicitação:', localData.id);
-            
-            unsubscribe2 = onSnapshot(doc(db, "solicitacoes_consulta", localData.id), async (solicitacaoDoc) => {
+          unsubscribe2 = onSnapshot(doc(db, "solicitacoes_consulta", localData.id), async (solicitacaoDoc) => {
               if (solicitacaoDoc.exists()) {
                 const solicitacaoData = solicitacaoDoc.data();
                 console.log('Solicitação atualizada:', solicitacaoData);
@@ -302,7 +310,7 @@ function CardConsultaImediata() {
 
                   try {
                     // Atualizar consulta local
-                    await updateDoc(doc(db, "consultas_imediatas", user.uid), {
+                    await updateDoc(doc(db, "consultas", localData.id), {
                       videochamada: videochamadaInfo,
                       status: 'waiting'
                     });
@@ -323,14 +331,6 @@ function CardConsultaImediata() {
               }
             });
           }
-        } else {
-          setConsultaAtiva(null);
-          // Limpar listener da solicitação se consulta foi finalizada
-          if (unsubscribe2) {
-            unsubscribe2();
-            unsubscribe2 = null;
-          }
-        }
       } else {
         setConsultaAtiva(null);
         if (unsubscribe2) {
@@ -344,12 +344,11 @@ function CardConsultaImediata() {
       if (unsubscribe1) unsubscribe1();
       if (unsubscribe2) unsubscribe2();
     };
-  }, []);
+  }, [user]);
 
   const iniciarConsultaImediata = async () => {
     try {
       setCarregando(true);
-      const user = auth.currentUser;
       if (!user) {
         alert("Usuário não está logado");
         return;
@@ -399,7 +398,7 @@ function CardConsultaImediata() {
         duracao: 30
       };
 
-      await setDoc(doc(db, "consultas_imediatas", user.uid), novaConsulta);
+      await setDoc(doc(db, "consultas", docRef.id), novaConsulta);
 
     } catch (error) {
       console.error('Erro ao criar consulta:', error);
@@ -421,9 +420,8 @@ function CardConsultaImediata() {
     
     // Marcar como ativa quando entrar
     const db = getFirestore();
-    const user = auth.currentUser;
-    if (user) {
-      updateDoc(doc(db, "consultas_imediatas", user.uid), {
+    if (user && consultaAtiva) {
+      updateDoc(doc(db, "consultas", consultaAtiva.id), {
         'videochamada.status': 'active',
         status: 'active'
       }).catch(console.error);
@@ -432,7 +430,6 @@ function CardConsultaImediata() {
 
   const cancelarConsulta = async () => {
     try {
-      const user = auth.currentUser;
       if (!user || !consultaAtiva) return;
 
       const db = getFirestore();
@@ -453,7 +450,7 @@ function CardConsultaImediata() {
       }
 
       // Cancelar localmente sempre
-      await updateDoc(doc(db, "consultas_imediatas", user.uid), {
+      await updateDoc(doc(db, "consultas", consultaAtiva.id), {
         status: 'cancelled'
       });
 
@@ -501,7 +498,7 @@ function CardConsultaImediata() {
             </>
           )}
           
-          {consultaAtiva.status === 'waiting' && (
+          {(consultaAtiva.status === 'waiting' || consultaAtiva.status === 'agendada') && (
             <>
               <p className="text-gray-600 text-sm text-center mb-4">
                 🎉 Médico encontrado! Clique para entrar na videochamada
@@ -566,8 +563,10 @@ function getStatusText(status: string): string {
   switch (status) {
     case 'pending': return 'Aguardando médico';
     case 'waiting': return 'Médico aguardando';
+    case 'agendada': return 'Médico aceitou';
     case 'active': return 'Consulta ativa';
     case 'completed': return 'Finalizada';
+    case 'realizada': return 'Realizada';
     case 'cancelled': return 'Cancelada';
     default: return 'Desconhecido';
   }
@@ -576,8 +575,8 @@ function getStatusText(status: string): string {
 // helper component
 function CardConsulta({ title, uuid }: { title: string; uuid: string }) {
   const router = useRouter();
+  const { user } = useAuth();
   const iniciar = async () => {
-    const user = auth.currentUser;
     if (!user) return alert("Usuário não está logado");
   
     const db = getFirestore();
