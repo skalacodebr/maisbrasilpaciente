@@ -53,7 +53,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, uuid });
     }
 
-    // 7) On error, return details
+    // 7) Check if it's an expired key error - if so, allow signup to continue
+    const isExpiredKeyError = text.toLowerCase().includes('expired') || 
+                             text.toLowerCase().includes('expirado') ||
+                             text.toLowerCase().includes('key') ||
+                             resp.status === 401 || resp.status === 403;
+    
+    if (isExpiredKeyError) {
+      console.log("⚠️ Rapidoc key expired, allowing signup to continue without beneficiary creation");
+      return NextResponse.json({ success: true, uuid: null, warning: "Rapidoc unavailable" });
+    }
+
+    // 8) On other errors, return details
     return NextResponse.json<Err>(
       {
         success: false,

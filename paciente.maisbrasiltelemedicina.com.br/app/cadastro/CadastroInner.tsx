@@ -169,10 +169,16 @@ export default function Cadastro() {
       })
       const rtxt = await respBen.text()
       const rdata = (() => { try { return JSON.parse(rtxt) } catch { return { message: rtxt } } })()
-      if (!respBen.ok || !rdata.uuid) {
+      if (!respBen.ok || (!rdata.uuid && !rdata.warning)) {
         throw new Error(rdata.message || "Erro ao criar beneficiary")
       }
-      await updateDoc(userRef, { beneficiaryUuid: rdata.uuid })
+      
+      // Only update beneficiaryUuid if we actually got one from Rapidoc
+      if (rdata.uuid) {
+        await updateDoc(userRef, { beneficiaryUuid: rdata.uuid })
+      } else if (rdata.warning) {
+        console.log("⚠️ Cadastro prosseguindo sem integração Rapidoc:", rdata.warning)
+      }
 
       // 4) solicita cobrança
       const respAss = await fetch("/api/subscribe", {

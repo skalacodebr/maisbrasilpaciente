@@ -275,7 +275,7 @@ function CardConsultaImediata() {
     const consultasQuery = query(
       collection(db, "consultas"), 
       where("patientId", "==", user.uid),
-      where("status", "in", ["pending", "waiting", "agendada", "active"]),
+      where("status", "in", ["pending", "waiting", "agendada"]),
       limit(1)
     );
     
@@ -423,7 +423,7 @@ function CardConsultaImediata() {
     if (user && consultaAtiva) {
       updateDoc(doc(db, "consultas", consultaAtiva.id), {
         'videochamada.status': 'active',
-        status: 'active'
+        status: 'agendada'
       }).catch(console.error);
     }
   };
@@ -513,10 +513,10 @@ function CardConsultaImediata() {
             </>
           )}
           
-          {consultaAtiva.status === 'active' && (
+          {consultaAtiva.status === 'agendada' && (
             <>
               <p className="text-gray-600 text-sm text-center mb-4">
-                Consulta ativa! Clique para voltar à videochamada
+                Consulta agendada! Clique para entrar na videochamada
               </p>
               <Button
                 className="w-full bg-green-600 hover:bg-green-700 flex items-center justify-center"
